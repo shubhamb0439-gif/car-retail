@@ -1,0 +1,13 @@
+.venv*
+models/
+results/
+test_photos/
+test_photos_archive/
+reference/
+notebooks/
+tests/
+tools/
+**/__pycache__
+*.pyc
+.pytest_cache
+.git

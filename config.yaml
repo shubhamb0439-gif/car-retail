@@ -1,0 +1,202 @@
+# glassfix configuration.
+# Every tunable number lives here. Pixel sizes are at the *working* resolution
+# (long side = processing.max_side) unless stated otherwise.
+
+seed: 0
+device: auto                  # auto | cuda | mps | cpu
+cpu_threads: 4                # CPU threads for torch. More threads = more scratch memory; 20 crashed a 16 GB laptop
+models_dir: models            # Hugging Face weights cache (git-ignored)
+
+processing:
+  max_side: 2048              # resize long side to this for processing; output stays at original size
+  jpeg_quality: 95
+  compare_panel_height: 720   # height of each panel in <name>_compare.jpg
+
+detector:
+  name: groundingdino_sam2    # groundingdino_sam2 | florence2_sam2
+  # "sunroof." is left out on purpose: in eye-level photos Grounding DINO matched it to hoods and
+  # headlights. Add it back only for high/overhead shots.
+  glass_prompt: "car windshield. car window. rear window. quarter glass."
+  car_prompt: "car."
+  max_glass_box_frac_of_car: 0.6   # glass boxes larger than this share of the car box are rejected
+  max_glass_center_y_in_car: 0.45  # glass box centre must be in the top 45% of the main car box (rejects headlights/taillights)
+  interior_prompt: "car seat. headrest. steering wheel. dashboard."
+  car_mask: true              # segment the whole main car (needed for style 'cutout')   # interior parts kept as silhouettes (studiowhite)
+  exclude_prompt: "windshield wiper."   # objects on the glass that must never be repainted ("" = off)
+  exclude_dilate_px: 1                  # grow excluded objects slightly (more leaves a halo of old glass)
+  groundingdino:
+    model_id: IDEA-Research/grounding-dino-tiny   # or IDEA-Research/grounding-dino-base
+    box_threshold: 0.30
+    text_threshold: 0.25
+    max_side: 1024            # image size fed to Grounding DINO (boxes only; SAM 2 refines at full working size)
+  florence2:
+    model_id: florence-community/Florence-2-base  # or florence-community/Florence-2-large
+    task: "<CAPTION_TO_PHRASE_GROUNDING>"
+    max_new_tokens: 1024
+    num_beams: 3
+  sam2:
+    model_id: facebook/sam2.1-hiera-small         # or facebook/sam2.1-hiera-large (needs more VRAM)
+    multimask: true           # take the best of SAM 2's 3 candidate masks by predicted IoU
+    boxes_per_call: 4         # boxes per SAM call (memory: each box upsamples 3 full-size float masks)
+
+mask:
+  clip_to_box_expand: 0.03    # SAM mask is clipped to its prompt box grown by this fraction
+  car_box_mode: largest       # largest = only the main (biggest) car counts | all = any detected car
+  car_box_expand: 0.05        # car box grown by this fraction before the "on the car" test
+  min_inside_car: 0.85        # region must have this share of its pixels inside a car box
+  min_region_frac: 0.0008     # regions smaller than this share of the image are removed
+  close_px: 5                 # morphological close (bridge small gaps)
+  open_px: 3                  # morphological open (remove specks)
+  fill_holes: true
+  feather_px: 3               # inward-only feather; pixels outside the mask are never touched
+
+layers:
+  method: gaussian            # gaussian | guided
+  sigma_frac: 0.012           # low-pass sigma as a share of the working long side (~25 px at 2048)
+  guided_radius_frac: 0.015   # guided filter radius as a share of the working long side
+  guided_eps: 0.002           # guided filter regulariser (L scaled to 0..1)
+
+cracks:
+  method: sato                # sato | frangi | both
+  sigmas: [1.0, 2.0]
+  detect_bright: true         # cracks catching light
+  detect_dark: true           # cracks appearing dark
+  threshold_z: 6.0            # ridge response must exceed median + z * robust std inside the glass
+  min_contrast: 4.0           # and |high-frequency L| must be at least this (L units, 0..100)
+  local_ratio: 4.0            # and stand out this many times above the local texture RMS (0 = off)
+  local_sigma_px: 40          # neighbourhood for that RMS; wide, so a crack barely raises its own RMS
+  edge_margin_px: 8           # ignore this band along the glass border (frames, seals)
+  min_size_px: 30             # components smaller than this are dropped
+  min_length_px: 60           # skeleton length a component needs to count as a crack
+  max_width_px: 4.0           # mean width (area / skeleton length) a crack may have
+  dilate_px: 1                # grow the final crack mask slightly
+  min_total_length_px: 100    # crack_detected = total crack length >= this
+  strength: 1.0               # how strongly crack detail is drawn back on the new glass
+  render: bright              # bright = draw cracks as light lines (visible on dark tint) | signed = original polarity
+
+style:
+  # dereflect = learned reflection removal (DSIT) + clean-glass fallback where nothing behind the glass
+  #             was captured. Removes mirrored clouds/trees; interior kept wherever it is visible.
+  # studiowhite = studio look for a white environment: glass becomes light studio grey (tinted windows:
+  #               dark grey), nothing seen through it, interior parts kept as soft grey silhouettes.
+  # cleanglass = clean tinted glass with no reflections at all; the interior shows through faintly where
+  #              it was captured (dark/mid tones). Deterministic and identical across a car's photos.
+  # clear  = keep the original glass (interior stays visible), remove reflections/glare only
+  # tint   = replace the glass with a dark smoked tint + sky-to-ground gradient
+  # studio = tint + a fixed studio-softbox highlight
+  name: cutout                # transparent PNG of the car with studio glass (option A, the deliverable)
+  preserve_cracks: true       # tint/studio: draw cracks back. clear keeps all real detail, so cracks always stay
+  keep_shading: 0.15          # share of the original low-frequency shading kept (relative to region mean)
+  detail_keep: 0.0            # share of non-crack fine detail kept (0 = fully clean glass)
+  studiowhite:
+    clear_glass_rgb: [214, 220, 222]   # sampled from the client's studio reference (side windows)
+    tinted_glass_rgb: [79, 85, 87]     # sampled from the reference's privacy (quarter) glass
+    tinted_p90_below_L: 35    # a window is "tinted" if even its brightest 10% (original L, 0..100) stay below
+                              # this: tinted glass dims everything; clear glass with a dark interior does not
+    top_darken: 0.06          # glass a little darker at the top of each window, as in the reference
+    interior_strength: 0.9    # opacity of the interior silhouettes (clear windows only)
+    interior_dark_L: 38       # darkest interior tone (L); the lightest maps to the glass colour
+    interior_saturation: 0.15 # interior colour kept (0 = grey, like the reference)
+    interior_feather_px: 3
+  cleanglass:
+    interior_visibility: 0.6  # how much of the (haze-free) interior shows through the tint, 0..1
+    interior_saturation: 0.5  # colour of the interior seen through tint (0 = grey, 1 = original)
+    reflection_share_low: 0.70   # share of a pixel's light that is reflection (veil / original)...
+    reflection_share_high: 0.95  # ...above which the interior is hidden completely
+    highlight_low: 60         # original L (0..100) above which content is treated as reflection...
+    highlight_high: 85        # ...and fully replaced by tint above this
+  clear:
+    strength: 0.9             # share of the estimated reflection veil removed (1 = all of it)
+    restore_contrast: 0.0     # >0 re-stretches contrast (haze model); reflections are purely additive, so keep 0
+    veil_color: per_channel   # per_channel (removes coloured sky reflections) | grey
+    envelope: open            # open (follows glare gradients) | erode
+    min_window_frac: 0.012    # local-minimum window as a share of the long side (~25 px at 2048)
+    veil_sigma_frac: 0.012    # smoothing of the veil estimate
+  tint:
+    top_rgb: [70, 78, 88]     # sky side of the vertical gradient
+    bottom_rgb: [16, 18, 22]  # ground side
+    gradient_gamma: 1.2       # >1 keeps more of the glass dark
+  studio:
+    strength: 0.50            # screen-blend strength of the softbox highlight
+    texture_size: 512
+    angle_deg: 32             # strip angle from vertical, in the canonical texture
+    vertical_falloff: 0.45    # highlight fades by this much from top to bottom of the glass
+    strips:                   # position across the texture (0..1), plateau width, edge softness, intensity
+      - {center: 0.30, width: 0.10, softness: 0.06, intensity: 1.00}
+      - {center: 0.47, width: 0.04, softness: 0.03, intensity: 0.65}
+    approx_eps_frac: 0.02     # approxPolyDP epsilon as a share of the contour perimeter
+    min_region_frac: 0.0015   # glass regions smaller than this get tint only
+
+cutout:                       # style 'cutout': transparent PNG of the car with studio glass
+  preview_background_rgb: [255, 255, 255]   # background of the <name>_clean.jpg preview only
+  edge_refine_radius_px: 3    # guided-filter radius (working resolution) that softens the car outline
+  edge_refine_eps: 0.0005
+  glass_rgb: [120, 128, 132]  # clear windows: grey glass colour...
+  glass_alpha: 0.30           # ...and opacity (on white this gives the reference's ~RGB 214, 220, 222)
+  tinted_glass_rgb: [55, 60, 63]   # windows that are themselves tinted
+  tinted_glass_alpha: 0.85         # (on white ~RGB 85, as the reference's privacy glass)
+  tinted_p90_below_L: 35      # a window is tinted if even its brightest 10% stay below this lightness
+  interior_mode: none         # none (default: plain studio glass, reliable) | detect (seat/steering-wheel
+                              # detector) | luminance (light from behind the glass) | both. The last three
+                              # were tested: patchy, and luminance also keeps the street seen through the car.
+  reflection_share_low: 0.70  # luminance mode: pixels whose light is less reflection than this are kept...
+  reflection_share_high: 0.95 # ...and pixels above this become clean glass
+  highlight_low: 60           # luminance mode: bright (sky/glare) pixels fade to glass from this L...
+  highlight_high: 85          # ...to this L
+  interior_opacity: 1.0       # interior parts seen through clear windows: 1 = fully kept
+  interior_multiply: [0.92, 0.94, 0.95]   # light glass tint over the interior
+  interior_feather_px: 2
+  crack_rgb: [235, 238, 240]
+  crack_alpha: 0.9
+
+dereflect:
+  checkpoint_url: https://checkpoints.mingjia.li/dsit-26.6959.ckpt   # DSIT, XReflection model zoo
+  weights_file: dsit-26.6959.fp16.safetensors   # converted once from the checkpoint (pickle-free)
+  keep_checkpoint: false      # delete the 2.5 GB original after conversion
+  enc_blk_nums: [12, 8, 4, 2, 2]   # DSIT architecture (from XReflection train_dsit_w_nature.yml)
+  dec_blk_nums: [2, 2, 2, 2, 2]
+  max_side_px: 768            # glass crop is processed at this long side; the reflection is upsampled
+  tile_px: 192                # tile size (multiple of 32). CPU peak RAM: 192 -> ~3.9 GB, 256 -> ~4.4 GB, 384 -> more
+  tile_overlap_px: 32
+  fp16_on_cuda: true
+  strength: 1.0               # share of the predicted reflection subtracted
+  then_clear: true            # afterwards also run the 'clear' veil removal on what is left
+  fallback:                   # C: where the photo shows (almost) only reflection, use clean glass
+    enabled: true
+    dominance_low: 0.55       # reflection share of the light at which fallback starts...
+    dominance_high: 0.80      # ...and is complete
+    glare_low: 0.88           # very bright (blown-out) glass also falls back: luminance 0..1
+    glare_high: 0.97
+    smooth_frac: 0.01         # smoothing of the fallback map (share of the long side)
+
+generative:                   # hand-off to external editors (glassfix crops -> tools/edit_*.py -> glassfix compose)
+  crop_pad_frac: 0.04         # context around the glass in each crop
+  crop_max_side: 1024         # crops are written at most this large (long side)
+  qwen:
+    model_id: Qwen/Qwen-Image-Edit-2509                       # Apache-2.0
+    lightning_repo: lightx2v/Qwen-Image-Lightning             # Apache-2.0, 8-step LoRA
+    lightning_file: Qwen-Image-Edit-2509/Qwen-Image-Edit-2509-Lightning-8steps-V1.0-bf16.safetensors
+    steps: 8
+    true_cfg_scale: 1.0       # 1.0 with the Lightning LoRA (4.0 without it, 40 steps)
+    seed: 0
+    prompt: >-
+      Remove all reflections from the car's window glass: the reflected sky, clouds, trees, buildings,
+      people and glare must disappear. Keep the glass exactly its original colour and transparency, and
+      show the real car interior (seats, dashboard, steering wheel, headrests) behind it, consistent
+      with what is visible in the photo. Do not tint or darken the glass. Do not change anything
+      outside the windows.
+  dai:
+    model_id: sjtu-deepvision/dereflection-any-image-v0       # weights tagged Apache-2.0, built on SD 2.1 (OpenRAIL++-M)
+    prompt: remove glass reflection
+
+compare:
+  detectors: [groundingdino_sam2, florence2_sam2]
+  # dereflect is left out by default: slow on CPU and it barely changes car glass (see README).
+  styles: [cutout, clear]     # clear (and dereflect) never remove cracks: run once
+  preserve_cracks: [true, false]
+
+report:
+  image_long_side: 1400       # images embedded in report.html are downscaled to this
+  compare_image_long_side: 1100   # smaller for the comparison report (many variants per photo)
+  jpeg_quality: 82
+  title: "Glass Clean-up — Proof of Concept"

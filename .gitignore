@@ -1,0 +1,11 @@
+# model weights cache (downloaded on first run)
+models/
+# generated outputs
+results/
+# environments / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+reference/

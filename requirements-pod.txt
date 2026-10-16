@@ -1,0 +1,14 @@
+# Container / pod dependencies (torch + torchvision are installed first in the Dockerfile, CPU or CUDA build).
+# Same pins as requirements.txt, but the headless OpenCV build (no GUI / Qt libraries needed on a server).
+transformers==5.19.0
+huggingface-hub==2.2.0
+accelerate==1.15.0
+safetensors==0.8.0
+tokenizers==0.23.3
+opencv-contrib-python-headless==5.0.0.93   # Apache-2.0; includes cv2.ximgproc (guided filter)
+scikit-image==0.26.0
+timm==1.0.30
+scipy==1.17.1
+numpy==2.4.6
+pillow==12.3.0
+pyyaml==6.0.3

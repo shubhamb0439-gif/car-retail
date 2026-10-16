@@ -1,0 +1,7 @@
+# Environment for tools/edit_qwen.py (GPU only). Uses the CUDA torch already on Colab/Kaggle.
+diffusers==0.41.0          # Apache-2.0; QwenImageEditPlusPipeline + PipelineQuantizationConfig
+transformers==5.19.0       # Apache-2.0 (Qwen2.5-VL text encoder)
+accelerate==1.15.0         # Apache-2.0 (CPU offload)
+bitsandbytes==0.50.2       # MIT (4-bit loading)
+peft                       # Apache-2.0 (Lightning LoRA)
+pyyaml==6.0.3

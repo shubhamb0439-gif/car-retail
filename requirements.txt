@@ -1,0 +1,23 @@
+# glassfix: pinned, tested versions (Python 3.11, verified 2026-10-16 on Windows 11 + RTX A500).
+#
+# PyTorch is listed here for CPU / Apple MPS. For an NVIDIA GPU install torch first with the
+# matching CUDA build (see README), e.g.:
+#   uv pip install torch==2.14.1 torchvision==0.29.1 --torch-backend=auto
+torch==2.14.1
+torchvision==0.29.1
+
+transformers==5.19.0          # Grounding DINO, SAM 2 and Florence-2 are all native here
+huggingface-hub==2.2.0
+accelerate==1.15.0            # needed for device_map when loading weights
+safetensors==0.8.0
+tokenizers==0.23.3
+
+opencv-contrib-python==5.0.0.93   # contrib = cv2.ximgproc.guidedFilter
+scikit-image==0.26.0
+timm==1.0.30                  # Apache-2.0; layers for the vendored DSIT model (style 'dereflect')
+scipy==1.17.1
+numpy==2.4.6
+pillow==12.3.0
+pyyaml==6.0.3
+
+pytest==9.1.1

@@ -1,0 +1,4 @@
+# Optional HEIC/HEIF input (iPhone photos).
+# The pillow-heif code is BSD-3-Clause, but its prebuilt wheels bundle libheif / libde265 (LGPL-3.0).
+# See LICENSES.md before shipping this in a commercial product.
+pillow-heif==1.8.1
