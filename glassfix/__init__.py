@@ -1,3 +1,3 @@
-"""glassfix: car-window glass detection, reflection removal and studio-glass restyling (PoC)."""
+"""glassfix: car photo -> transparent-background studio PNG with clean tinted glass, via OpenAI."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

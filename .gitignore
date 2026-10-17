@@ -1,11 +1,11 @@
-# model weights cache (downloaded on first run)
-models/
-# generated outputs
-results/
 # environments / caches
-.venv/
+.venv*/
 __pycache__/
 *.pyc
 .pytest_cache/
-.ipynb_checkpoints/
+# generated outputs
+results/
+# private reference material (the style reference used by the code lives in assets/)
 reference/
+# secrets
+.env
