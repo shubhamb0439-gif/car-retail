@@ -1,0 +1,323 @@
+openapi: 3.1.0
+info:
+  title: Axion Vehicle Studio Image API
+  version: 1.0.0
+  description: |
+    Turns vehicle photos (exterior and interior) into studio-style PNG images on a transparent background.
+    Processing is asynchronous: create a job, upload the photos, submit, then receive results by webhook or polling.
+    Status: v1 specification for integration planning. The base URL and API keys are provided at onboarding.
+servers:
+  - url: https://{base_url}/v1
+    description: Production
+    variables:
+      base_url:
+        default: api.example.com
+        description: Provided at onboarding
+  - url: https://{sandbox_url}/v1
+    description: Sandbox (test keys, no charge)
+    variables:
+      sandbox_url:
+        default: sandbox.api.example.com
+        description: Provided at onboarding
+security:
+  - bearerAuth: []
+
+paths:
+  /jobs:
+    post:
+      operationId: createJob
+      summary: Create a job for one vehicle and get upload links
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateJobRequest' }
+            example:
+              vehicle_ref: "STOCK-48213"
+              tier: studio
+              webhook_url: "https://client.example.com/hooks/axion"
+              metadata: { dealer_id: "DLR-001" }
+              images:
+                - { image_ref: "01_front", view: exterior, filename: "01_front.jpg", content_type: "image/jpeg" }
+                - { image_ref: "13_dashboard", view: interior, filename: "13_dashboard.jpg", content_type: "image/jpeg" }
+      responses:
+        '201':
+          description: Job created; upload each image to its upload_url, then submit the job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+    get:
+      operationId: listJobs
+      summary: List recent jobs
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/JobStatus' } }
+        - { name: vehicle_ref, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { name: cursor, in: query, schema: { type: string }, description: next_cursor from the previous page }
+      responses:
+        '200':
+          description: A page of jobs, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Job' } }
+                  next_cursor: { type: [string, 'null'] }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /jobs/{job_id}:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    get:
+      operationId: getJob
+      summary: Get job status and results
+      responses:
+        '200':
+          description: The job, with per-image status and result links when ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: cancelJob
+      summary: Cancel a job that has not started processing, or delete a finished job's stored files
+      responses:
+        '204': { description: Cancelled or deleted }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /jobs/{job_id}/submit:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+    post:
+      operationId: submitJob
+      summary: Start processing after all images are uploaded
+      responses:
+        '202':
+          description: Accepted; the job moves to queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /jobs/{job_id}/images/{image_id}/reprocess:
+    parameters:
+      - $ref: '#/components/parameters/JobId'
+      - { name: image_id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: reprocessImage
+      summary: Re-process one image of a completed job (for example after a rare mismatch)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '202':
+          description: Accepted; the image and job return to processing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /usage:
+    get:
+      operationId: getUsage
+      summary: Processed-image counts per tier for a period (for reconciliation)
+      parameters:
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        '200':
+          description: Usage summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usage' }
+        '401': { $ref: '#/components/responses/Error' }
+
+webhooks:
+  jobFinished:
+    post:
+      summary: Sent when a job reaches completed, completed_with_errors or failed
+      description: |
+        Verify the X-Axion-Signature header before trusting the payload. Respond 2xx within 10 seconds;
+        failed deliveries are retried with backoff for up to 24 hours. Events may arrive more than once:
+        de-duplicate on event_id.
+      parameters:
+        - { name: X-Axion-Signature, in: header, required: true, schema: { type: string },
+            description: 't=<unix_ts>,v1=<hex HMAC-SHA256 of "<t>.<raw body>" with your webhook secret>' }
+        - { name: X-Axion-Event-Id, in: header, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookEvent' }
+      responses:
+        '200': { description: Received }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 'API key: "Authorization: Bearer ax_live_..." (production) or "ax_test_..." (sandbox)'
+
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema: { type: string, example: job_01J9ZKQ4M7 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: { type: string, maxLength: 128 }
+      description: Same key within 24 h returns the original response instead of creating a duplicate job
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Tier:
+      type: string
+      enum: [standard, studio, studio_plus]
+      description: standard = original lighting kept; studio = neutral studio lighting; studio_plus = studio at higher detail
+    View:
+      type: string
+      enum: [exterior, interior]
+    JobStatus:
+      type: string
+      enum: [awaiting_upload, queued, processing, completed, completed_with_errors, failed, cancelled, expired]
+    ImageStatus:
+      type: string
+      enum: [awaiting_upload, uploaded, queued, processing, succeeded, failed]
+
+    CreateJobRequest:
+      type: object
+      required: [tier, images]
+      properties:
+        vehicle_ref: { type: string, maxLength: 128, description: Your own reference (stock number, VIN, ...) }
+        tier: { $ref: '#/components/schemas/Tier' }
+        webhook_url: { type: string, format: uri, description: HTTPS URL for the job-finished event (optional) }
+        metadata: { type: object, additionalProperties: { type: string }, maxProperties: 20,
+                    description: Free key/value pairs returned unchanged }
+        images:
+          type: array
+          minItems: 1
+          maxItems: 40
+          items: { $ref: '#/components/schemas/ImageInput' }
+
+    ImageInput:
+      type: object
+      required: [image_ref, view]
+      properties:
+        image_ref: { type: string, maxLength: 128, description: Your identifier, unique within the job }
+        view: { $ref: '#/components/schemas/View' }
+        filename: { type: string }
+        content_type: { type: string, enum: [image/jpeg, image/png, image/webp, image/heic] }
+        source_url:
+          type: string
+          format: uri
+          description: Optional. Public or pre-signed HTTPS URL we download from instead of you uploading the file
+
+    Job:
+      type: object
+      properties:
+        job_id: { type: string }
+        vehicle_ref: { type: [string, 'null'] }
+        tier: { $ref: '#/components/schemas/Tier' }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        created_at: { type: string, format: date-time }
+        submitted_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+        upload_expires_at: { type: [string, 'null'], format: date-time }
+        results_expire_at: { type: [string, 'null'], format: date-time }
+        counts:
+          type: object
+          properties:
+            total: { type: integer }
+            succeeded: { type: integer }
+            failed: { type: integer }
+        metadata: { type: object, additionalProperties: { type: string } }
+        images: { type: array, items: { $ref: '#/components/schemas/JobImage' } }
+
+    JobImage:
+      type: object
+      properties:
+        image_id: { type: string }
+        image_ref: { type: string }
+        view: { $ref: '#/components/schemas/View' }
+        status: { $ref: '#/components/schemas/ImageStatus' }
+        upload_url: { type: [string, 'null'], description: 'Pre-signed HTTPS PUT URL (only while awaiting upload)' }
+        upload_headers: { type: object, additionalProperties: { type: string },
+                          description: Headers that must be sent with the PUT (for example Content-Type) }
+        result:
+          type: [object, 'null']
+          properties:
+            url: { type: string, description: Pre-signed HTTPS GET URL of the PNG }
+            url_expires_at: { type: string, format: date-time }
+            content_type: { type: string, example: image/png }
+            width: { type: integer, example: 1536 }
+            height: { type: integer, example: 1024 }
+            bytes: { type: integer }
+        processing_ms: { type: [integer, 'null'] }
+        error: { oneOf: [ { $ref: '#/components/schemas/ErrorBody' }, { type: 'null' } ] }
+
+    WebhookEvent:
+      type: object
+      properties:
+        event_id: { type: string }
+        type: { type: string, enum: [job.completed, job.completed_with_errors, job.failed] }
+        created_at: { type: string, format: date-time }
+        data:
+          type: object
+          properties:
+            job: { $ref: '#/components/schemas/Job' }
+
+    Usage:
+      type: object
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        images_processed:
+          type: object
+          properties:
+            standard: { type: integer }
+            studio: { type: integer }
+            studio_plus: { type: integer }
+        reprocessed: { type: integer }
+
+    ErrorBody:
+      type: object
+      properties:
+        code: { type: string, example: image_unreadable }
+        message: { type: string }
+    Error:
+      type: object
+      properties:
+        error:
+          allOf:
+            - $ref: '#/components/schemas/ErrorBody'
+            - type: object
+              properties:
+                request_id: { type: string }
+                retry_after_seconds: { type: [integer, 'null'] }
