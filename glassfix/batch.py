@@ -12,14 +12,14 @@ from PIL import Image, ImageDraw
 from .imageio import list_car_photos, load_image
 from .render import OpenAIRenderer, RenderError
 
-CSV_FIELDS = ["car_id", "photo", "output", "quality", "status", "seconds", "input_image_tokens",
+CSV_FIELDS = ["car_id", "photo", "output", "view", "tier", "quality", "status", "seconds", "input_image_tokens",
               "input_text_tokens", "output_tokens", "cost_usd", "output_size", "error"]
 
 
-def _one(renderer: OpenAIRenderer, car_id: str, path: Path, out_dir: Path, quality: str) -> dict[str, Any]:
-    row = {"car_id": car_id, "photo": path.name, "quality": quality, "output": ""}
+def _one(renderer: OpenAIRenderer, car_id: str, path: Path, out_dir: Path) -> dict[str, Any]:
+    row = {"car_id": car_id, "photo": path.name, "view": renderer.view, "tier": renderer.tier, "quality": renderer.t["quality"], "output": ""}
     try:
-        res = renderer.render(load_image(path), quality)
+        res = renderer.render(load_image(path))
     except (RenderError, OSError, ValueError) as e:
         return {**row, "status": "failed", "error": str(e)}
     out = out_dir / car_id / f"{path.stem}.png"
@@ -49,20 +49,19 @@ def _sheet(rows: list[dict[str, Any]], out_dir: Path, title: str) -> None:
     canvas.save(out_dir / "sheet.jpg", quality=88)
 
 
-def run(cfg: dict[str, Any], input_dir: Path, output_dir: Path, run_name: str, quality: str | None,
+def run(cfg: dict[str, Any], input_dir: Path, output_dir: Path, run_name: str, tier: str | None = None,
         renderer: OpenAIRenderer | None = None) -> list[dict[str, Any]]:
-    quality = quality or cfg["openai"]["quality"]
+    renderer = renderer or OpenAIRenderer(cfg, tier)
     cars = list_car_photos(input_dir)
     if not cars:
         raise SystemExit(f"No photos found under {input_dir}")
     out_dir = output_dir / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    renderer = renderer or OpenAIRenderer(cfg)
     jobs = [(car_id, p) for car_id, paths in cars.items() for p in paths]
-    print(f"[glassfix] {len(jobs)} photos, quality={quality}, model={cfg['openai']['model']}, "
+    print(f"[glassfix] {len(jobs)} photos, view={renderer.view}, tier={renderer.tier} (quality {renderer.t['quality']}), model={cfg['openai']['model']}, "
           f"style reference={'yes' if renderer.reference else 'no'}", flush=True)
     with ThreadPoolExecutor(max_workers=cfg["openai"]["concurrency"]) as pool:
-        rows = list(pool.map(lambda j: _one(renderer, j[0], j[1], out_dir, quality), jobs))
+        rows = list(pool.map(lambda j: _one(renderer, j[0], j[1], out_dir), jobs))
     for r in rows:
         tail = f"${r['cost_usd']}  {r['seconds']}s" if r["status"] == "ok" else f"FAILED: {r['error']}"
         print(f"  {r['car_id']}/{r['photo']}: {tail}", flush=True)
@@ -73,7 +72,7 @@ def run(cfg: dict[str, Any], input_dir: Path, output_dir: Path, run_name: str, q
         w.writerows(rows)
     ok = [r for r in rows if r["status"] == "ok"]
     total = sum(float(r["cost_usd"]) for r in ok)
-    _sheet(rows, out_dir, f"{run_name}  |  quality {quality}  |  {len(ok)}/{len(rows)} ok  |  total ${total:.3f}")
+    _sheet(rows, out_dir, f"{run_name}  |  {renderer.view}  |  tier {renderer.tier}  |  {len(ok)}/{len(rows)} ok  |  total ${total:.3f}")
     avg = total / len(ok) if ok else 0.0
     print(f"[glassfix] done: {len(ok)}/{len(rows)} ok, total ${total:.3f}, average ${avg:.4f} per photo -> {out_dir}")
     return rows

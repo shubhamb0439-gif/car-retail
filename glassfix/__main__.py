@@ -17,12 +17,13 @@ def check(cfg: dict) -> int:
     print(f"OPENAI_API_KEY        {'set' if key else 'MISSING'}")
     if key != key.strip():
         print("  warning: the key has leading/trailing spaces; re-set it without them")
-    ref = cfg.get("style_reference")
+    tier = cfg["tiers"][cfg["default_tier"]]
+    ref = tier.get("style_reference")
     if ref:
         p = Path(ref) if Path(ref).is_absolute() else ROOT / ref
         print(f"style reference       {'found' if p.exists() else 'MISSING'} ({p})")
         ok &= p.exists()
-    print(f"model / quality       {cfg['openai']['model']} / {cfg['openai']['quality']}")
+    print(f"model / default tier  {cfg['openai']['model']} / {cfg['default_tier']} (quality {tier['quality']})")
     if key:
         try:
             from openai import OpenAI
@@ -44,7 +45,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--input", type=Path, default=Path("test_photos"))
     r.add_argument("--output", type=Path, default=Path("results"))
     r.add_argument("--run-name", required=True)
-    r.add_argument("--quality", choices=["low", "medium", "high"], default=None)
+    r.add_argument("--tier", default=None, help="service tier from config.yaml: low | medium | high")
+    r.add_argument("--view", choices=["exterior", "interior"], default="exterior",
+                   help="exterior photos (default) or interior / open-door photos")
     r.add_argument("--no-reference", action="store_true", help="don't send the style reference image")
     r.add_argument("--config", type=Path, default=None)
     c = sub.add_parser("check", help="check API key, style reference and model access (free)")
@@ -58,9 +61,11 @@ def main(argv: list[str] | None = None) -> int:
     from .batch import run
     from .render import OpenAIRenderer
 
+    tier = args.tier or cfg["default_tier"]
     if args.no_reference:
-        cfg = with_overrides(cfg, **{"style_reference": ""})
-    rows = run(cfg, args.input, args.output, args.run_name, args.quality, OpenAIRenderer(cfg, root=ROOT))
+        table = "tiers" if args.view == "exterior" else "interior_tiers"
+        cfg = with_overrides(cfg, **{f"{table}.{tier}.style_reference": ""})
+    rows = run(cfg, args.input, args.output, args.run_name, tier, OpenAIRenderer(cfg, tier, root=ROOT, view=args.view))
     return 0 if all(r["status"] == "ok" for r in rows) else 1
 
 

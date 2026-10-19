@@ -43,8 +43,19 @@ def shrink(img: Image.Image, max_side: int) -> Image.Image:
 
 
 class OpenAIRenderer:
-    def __init__(self, cfg: dict[str, Any], client: Any = None, root: Path | None = None):
+    """Renders photos for one service tier (low / medium / high, see config.yaml)."""
+
+    def __init__(self, cfg: dict[str, Any], tier: str | None = None, client: Any = None, root: Path | None = None,
+                 view: str = "exterior"):
         self.cfg = cfg
+        self.tier = tier or cfg["default_tier"]
+        self.view = view
+        table = {"exterior": cfg["tiers"], "interior": cfg["interior_tiers"]}.get(view)
+        if table is None:
+            raise RenderError(f"unknown view {view!r}; choose exterior or interior")
+        if self.tier not in table:
+            raise RenderError(f"unknown tier {self.tier!r}; choose from {sorted(table)}")
+        self.t = table[self.tier]
         o = cfg["openai"]
         if client is None:
             from openai import OpenAI
@@ -52,7 +63,7 @@ class OpenAIRenderer:
             client = OpenAI(max_retries=0, timeout=o["timeout_seconds"])  # retries are handled below
         self.client = client
         self.reference = None
-        ref = cfg.get("style_reference")
+        ref = self.t.get("style_reference")
         if ref:
             path = Path(ref) if Path(ref).is_absolute() else (root or Path.cwd()) / ref
             if not path.exists():
@@ -60,7 +71,7 @@ class OpenAIRenderer:
             self.reference = _png_file(shrink(Image.open(path).convert("RGBA"), o["send_max_side"]), "reference.png")
 
     def _prompt(self) -> str:
-        p = self.cfg["prompt"].strip()
+        p = self.t["prompt"].strip()
         return p + ("\n" + self.cfg["prompt_reference_suffix"].strip() if self.reference else "")
 
     def _cost(self, usage: Any) -> tuple[int, int, int, float]:
@@ -72,7 +83,7 @@ class OpenAIRenderer:
         usd = (img_in * r["image_input"] + txt_in * r["text_input"] + out * r["image_output"]) / 1e6
         return img_in, txt_in, out, usd
 
-    def render(self, photo: Image.Image, quality: str | None = None) -> RenderResult:
+    def render(self, photo: Image.Image) -> RenderResult:
         o = self.cfg["openai"]
         images = [_png_file(shrink(photo.convert("RGB"), o["send_max_side"]), "photo.png")]
         if self.reference:
@@ -81,7 +92,7 @@ class OpenAIRenderer:
         for attempt in range(o["max_retries"] + 1):
             try:
                 resp = self.client.images.edit(
-                    model=o["model"], image=images, prompt=self._prompt(), quality=quality or o["quality"],
+                    model=o["model"], image=images, prompt=self._prompt(), quality=self.t["quality"],
                     background="transparent", output_format="png",
                 )
                 break

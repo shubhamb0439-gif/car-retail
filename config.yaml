@@ -1,29 +1,94 @@
-# glassfix configuration: car photo -> transparent-background studio PNG with clean tinted glass (OpenAI).
+# glassfix configuration: car photo -> transparent-background PNG with clean tinted glass (OpenAI).
 
 openai:
   model: gpt-image-2.5-sunburst   # OpenAI's model for precise edits (docs, 2026-10); gpt-image-2.5-flare is faster
-  quality: medium                 # low | medium | high  (measured ~$0.024 / $0.029 / $0.054 per photo, see README)
   send_max_side: 1536             # photos are downscaled to this before upload (output is ~1536x1024 anyway)
   concurrency: 3                  # photos processed in parallel (raise as your OpenAI rate limit allows)
   max_retries: 4                  # retries on rate limits / timeouts / server errors
   retry_backoff_seconds: 15       # wait 15 s, 30 s, 45 s, ... between retries
   timeout_seconds: 180
 
-# Style example sent with every photo so all cars get the same look (adds ~$0.01 per photo).
-# Set to "" to send the photo alone (cheaper, less consistent).
-style_reference: assets/style_reference.png
+default_tier: medium
 
-prompt: >-
-  Turn this car photo into a clean studio product image with a fully transparent background.
-  Keep the car itself exactly the same: same model, shape, paint colour, wheels, badges, lights, trim and
-  camera angle. Remove the background, the ground and all shadows. Even out the lighting on the car like a
-  soft white studio. Replace every window with clean, slightly grey tinted glass that is semi-transparent,
-  with no reflections of sky, trees or buildings; the car's interior (seats, headrests, steering wheel)
-  stays faintly visible through it.
+# Service tiers. Each tier sets the OpenAI quality, the prompt and whether the style reference is sent.
+tiers:
+  low:
+    # Cheapest: only remove the background and clean the glass; the photo's own lighting is kept.
+    quality: low
+    style_reference: ""           # not sent: it would pull in studio lighting (and costs ~$0.01 extra)
+    prompt: >-
+      Remove the background from this car photo and return the car on a fully transparent background.
+      Keep the car exactly as it is in the photo: same model, shape, paint colour, dirt, wheels, badges, lights,
+      licence plate, trim and camera angle, and keep the ORIGINAL LIGHTING unchanged (same sunlight, shadows on
+      the car, highlights and colours). Remove the ground, the car's shadow and everything around the car.
+      Replace every window with clean, slightly grey tinted glass that is semi-transparent, with no reflections
+      of sky, trees or buildings; the car's interior (seats, headrests, steering wheel) stays faintly visible
+      through it, and no people are visible. Change nothing else.
+  medium:
+    # Studio look: neutral, even studio lighting plus the same background removal and glass.
+    quality: medium
+    style_reference: assets/style_reference.png
+    prompt: &studio_prompt >-
+      Change ONLY the lighting and the background of this car photo; everything about the car itself stays
+      exactly as photographed. Keep the car's real condition untouched: every scratch, dent, scuff, chip, crack,
+      dirt, dust, mud, stain, rust, faded or worn area, sticker and imperfection must remain visible in the same
+      place, as well as the same model, shape, paint colour, wheels, badges, lights, licence plate, trim and
+      camera angle. Do not clean, repair, repaint, smooth or retouch anything.
+      Return the car on a fully transparent background: remove the background, the ground and the car's shadow.
+      Relight the car with neutral, even, soft white studio lighting: no warm sunset tint, no harsh sun or hard
+      shadows, no reflections of the surroundings in the paint.
+      Replace every window with clean, slightly grey tinted glass that is semi-transparent, with no reflections
+      of sky, trees or buildings; the car's interior (seats, headrests, steering wheel) stays faintly visible
+      through it, and no people are visible.
+  high:
+    # Same studio look as medium, rendered at OpenAI's high quality.
+    quality: high
+    style_reference: assets/style_reference.png
+    prompt: *studio_prompt
+
+# Interior / open-door photos (python -m glassfix render --view interior). No style reference: it is an
+# exterior car and would be copied. Same tiers: low keeps the lighting, medium/high relight like a studio.
+interior_tiers:
+  low:
+    quality: low
+    style_reference: ""
+    prompt: >-
+      This is a photo of a car interior (the cabin, possibly seen through an open door). Keep every part of the car
+      exactly as photographed: seats, headrests, steering wheel, dashboard, screens and what they show, controls,
+      console, door panels, trim, pillars, headliner, sunroof frame, mirrors and any car body in the frame, with
+      the same materials, colours, stitching, wear, dirt and condition. Keep the ORIGINAL LIGHTING unchanged.
+      Remove everything outside the car: the scenery seen through the windscreen, side windows, rear window and
+      sunroof, the view through any open door, and any ground or background around the car. Do not remove the
+      glass: every window, the windscreen and the sunroof become clean, slightly grey tinted, semi-transparent
+      glass (the same look as on the car's exterior) with no reflections and nothing visible through it, and
+      everything behind the glass and around the car is fully transparent. Door-mirror glass stays a mirror.
+      Remove people who are outside the car or reflected in the glass. Change nothing else.
+  medium:
+    quality: medium
+    style_reference: ""
+    prompt: &interior_studio_prompt >-
+      This is a photo of a car interior (the cabin, possibly seen through an open door). Change ONLY the lighting
+      and what is outside the car; every part of the car stays exactly as photographed: seats, headrests, steering
+      wheel, dashboard, screens and what they show, controls, console, door panels, trim, pillars, headliner,
+      sunroof frame, mirrors and any car body in the frame, with the same materials, colours, stitching, and every
+      crease, scratch, scuff, stain, dirt and sign of wear in the same place. Do not clean, repair or retouch anything.
+      Remove everything outside the car: the scenery seen through the windscreen, side windows, rear window and
+      sunroof, the view through any open door, and any ground or background around the car. Do not remove the
+      glass: every window, the windscreen and the sunroof become clean, slightly grey tinted, semi-transparent
+      glass (the same look as on the car's exterior) with no reflections and nothing visible through it, and
+      everything behind the glass and around the car is fully transparent. Door-mirror glass stays a mirror.
+      Remove people who are outside the car or reflected in the glass.
+      Relight the cabin with neutral, even, soft white studio lighting: no warm sunset or golden-hour tint, no harsh
+      sun patches or hard shadows.
+  high:
+    quality: high
+    style_reference: ""
+    prompt: *interior_studio_prompt
+
 prompt_reference_suffix: >-
   The SECOND image is only a style example for the glass, lighting and transparent background. Never copy
-  its car: the output must show the car from the FIRST image (same make, model, body type, colour and
-  camera angle), even if the two cars are completely different.
+  its car or its clean condition: the output must show the car from the FIRST image (same make, model, body
+  type, colour, camera angle and every scratch, dent and mark), even if the two cars are completely different.
 
 # OpenAI GPT Image 2.5 token prices (USD per 1M tokens, pricing page 2026-10), used for the cost columns.
 pricing_usd_per_million_tokens:

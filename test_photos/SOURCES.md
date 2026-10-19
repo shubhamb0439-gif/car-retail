@@ -27,5 +27,8 @@ are used outside Wikipedia, so please credit him if these are shown to a client.
 | File | Source | License |
 |---|---|---|
 | ford_ecosport_user/side.png | Provided by the project owner as a real example input (2026-10-16) | Not CC0: internal testing only, do not redistribute |
+| ford_ecosport_customer/*.jpg (8 views) | Provided by the project owner, a real customer-style set (2026-10-17). Shows a licence plate and people inside the car | Not CC0: internal testing only, do not redistribute |
 
 `reference/target_look_ecosport_studio.png` (also from the project owner) shows the target studio look. It is not used by the code.
+
+| interior_samples/*.png (3 interior views) | Provided by the project owner (2026-10-17). Two carry a stock-photo watermark (dreamstime); one looks like a manufacturer press image | Not CC0: internal testing only. Licensed stock or press photos must not be processed or published without the right licence |
